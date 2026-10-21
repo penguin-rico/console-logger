@@ -12,23 +12,22 @@ struct Config {
     save_folder: PathBuf,
 }
 
-fn create_config() -> String {
+fn create_config() -> Config {
     let default_config = Config {
         shell: "/bin/bash".to_string(),
         save_folder: dirs::home_dir().unwrap().join("logs"),
     };
-    toml::to_string(&default_config)?
+    default_config
 }
 
 fn main() {
     // TODO: Load Config
     let config_folder = dirs::config_dir().unwrap().join("console-logger");
     let config_file_content = fs::read_to_string(config_folder.join("config.toml"));
-    let config_text = match config_file_content {
-        Ok(t) => t,
+    let cfg: Config = match config_file_content {
+        Ok(t) => toml::from_str(&t).unwrap(),
         Err(e) => create_config(),
     };
-    let cfg: config = toml::from_str(&config_file_content);
     // TODO: Create config from user input
     //
 }
