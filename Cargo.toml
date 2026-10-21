@@ -1,0 +1,10 @@
+[package]
+name = "console-logger"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dirs = "7.0.0"
+inquire = "0.9.4"
+serde = { version = "1", features = ["derive"] }
+toml = "1.1.8"
