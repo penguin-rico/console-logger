@@ -6,13 +6,15 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
+use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 struct Config {
     shell: PathBuf,
     save_folder: PathBuf,
@@ -24,7 +26,12 @@ fn create_config(config_folder_path: &PathBuf) -> Config {
         .unwrap()
         .to_string();
     let save_folder = Text::new("Path to save folder?")
-        .with_default("~/console-logger/")
+        .with_default(
+            &dirs::home_dir()
+                .unwrap()
+                .join(".console-logger")
+                .to_string_lossy(),
+        )
         .prompt()
         .unwrap();
 
@@ -72,15 +79,45 @@ fn print_centered_banner(path: &str, term_width: usize) {
 }
 
 fn main() {
-    // TODO: Load Config
     let config_folder = dirs::config_dir().unwrap().join("console-logger");
+    let args: Vec<String> = std::env::args().collect();
+
     let config_file_content = fs::read_to_string(config_folder.join("config.toml"));
-    let cfg: Config = match config_file_content {
+
+    let mut cfg: Config = match config_file_content {
         Ok(t) => toml::from_str(&t).unwrap(),
         Err(_) => create_config(&config_folder),
     };
 
-    let jetzt = Local::now();
+    if args.len() > 1 {
+        if args[1] == "config" {
+            cfg = create_config(&config_folder);
+            return;
+        }
+        if args[1] == "ls" {
+            let out = Command::new("ls")
+                .arg("-a")
+                .arg(&cfg.save_folder)
+                .output()
+                .unwrap();
+            println!("{}", String::from_utf8_lossy(&out.stdout));
+            return;
+        }
+        if args[1] == "-h" || args[1] == "--help" {
+            println!("Usage: console-logger [COMMAND]");
+            println!();
+            println!("Commands:");
+            println!("  (none)    Start shell and record the session");
+            println!("  config    Recreate the config");
+            println!("  ls        List logs in the save folder");
+            println!("  -h        Show this help");
+            return;
+        }
+        println!("Unsupported argumet: {}, -h help", args[1]);
+        return;
+    }
+
+    fs::create_dir_all(&cfg.save_folder).unwrap();
     let session_name = Text::new("Session Name?")
         .with_default(&Local::now().format("%d.%m.%Y %H:%M:%S").to_string())
         .prompt()
@@ -111,7 +148,7 @@ fn main() {
 
     // Create File
     let mut output_file = File::create(cfg.save_folder.join(session_name)).unwrap();
-    writeln!(output_file, "Test").unwrap();
+    writeln!(output_file, "```bash").unwrap();
     thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buf = [0u8; 1024];
@@ -123,12 +160,15 @@ fn main() {
         }
     });
     crossterm::terminal::enable_raw_mode().unwrap();
+    let log = Arc::new(Mutex::new(&output_file));
     loop {
         let n = reader.read(&mut buf).unwrap_or(0);
         if n == 0 {
             break;
         } // 0 = Shell beendet
+        log.lock().unwrap().write_all(&buf[..n]).unwrap();
         print!("{}", String::from_utf8_lossy(&buf[..n]));
         std::io::stdout().flush().ok(); // braucht use std::io::Write
     }
+    writeln!(output_file, "```").unwrap();
 }
