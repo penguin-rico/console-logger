@@ -3,6 +3,7 @@ use inquire::{Confirm, MultiSelect, Select, Text};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::thread;
@@ -107,6 +108,10 @@ fn main() {
     let mut reader = pair.master.try_clone_reader().unwrap();
     let mut buf = [0u8; 4096];
     let mut writer = pair.master.take_writer().unwrap();
+
+    // Create File
+    let mut output_file = File::create(cfg.save_folder.join(session_name)).unwrap();
+    writeln!(output_file, "Test").unwrap();
     thread::spawn(move || {
         let mut stdin = std::io::stdin();
         let mut buf = [0u8; 1024];
