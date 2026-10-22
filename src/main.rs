@@ -1,7 +1,7 @@
 use chrono::Local;
-use inquire::{Confirm, MultiSelect, Select, Text};
+use inquire::MultiSelect;
+use inquire::{Confirm, Select, Text};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use serde;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
@@ -9,10 +9,7 @@ use std::io::Write;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 struct Config {
@@ -84,14 +81,52 @@ fn main() {
 
     let config_file_content = fs::read_to_string(config_folder.join("config.toml"));
 
-    let mut cfg: Config = match config_file_content {
+    let cfg: Config = match config_file_content {
         Ok(t) => toml::from_str(&t).unwrap(),
         Err(_) => create_config(&config_folder),
     };
 
     if args.len() > 1 {
         if args[1] == "config" {
-            cfg = create_config(&config_folder);
+            create_config(&config_folder);
+            return;
+        }
+        if args[1] == "clear" {
+            let mut namen: Vec<String> = fs::read_dir(&cfg.save_folder)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            namen.sort();
+
+            if namen.is_empty() {
+                println!("No files.");
+                return;
+            }
+            const ALL: &str = "[ All files ]";
+            let mut optionen = vec![ALL.to_string()];
+            optionen.extend(namen.clone());
+
+            let auswahl = MultiSelect::new("Which files should be deleted?", optionen)
+                .prompt()
+                .unwrap();
+
+            let zu_loeschen = if auswahl.iter().any(|a| a == ALL) {
+                namen // alle
+            } else {
+                auswahl // nur die gewählten
+            };
+            let ok = Confirm::new(&format!("Delete {} file(s)?", zu_loeschen.len()))
+                .with_default(false)
+                .prompt()
+                .unwrap();
+            if !ok {
+                return;
+            }
+            for name in zu_loeschen {
+                fs::remove_file(cfg.save_folder.join(&name)).unwrap();
+            }
             return;
         }
         if args[1] == "ls" {
@@ -118,8 +153,10 @@ fn main() {
     }
 
     fs::create_dir_all(&cfg.save_folder).unwrap();
+    let ts = Local::now().format("%d.%m.%Y %H:%M:%S");
+
     let session_name = Text::new("Session Name?")
-        .with_default(&Local::now().format("%d.%m.%Y %H:%M:%S").to_string())
+        .with_default(&ts.to_string())
         .prompt()
         .unwrap();
     print!("\x1B[2J\x1B[1;1H");
@@ -137,8 +174,7 @@ fn main() {
             pixel_height: 0,
         })
         .expect("PtyPair konnte nicht erstellt werden");
-    let mut child = pair
-        .slave
+    pair.slave
         .spawn_command(CommandBuilder::new(&cfg.shell))
         .expect("Shell konnte nicht gestartet werden");
     drop(pair.slave);
@@ -148,6 +184,12 @@ fn main() {
 
     // Create File
     let mut output_file = File::create(cfg.save_folder.join(session_name)).unwrap();
+    writeln!(output_file, "Session started at: {ts}").unwrap();
+    let shell_name = cfg.shell.into_os_string().into_string().unwrap();
+    writeln!(output_file, "Shell: {shell_name}").unwrap();
+    drop(shell_name);
+
+    writeln!(output_file, "------------------------------------------").unwrap();
     writeln!(output_file, "```bash").unwrap();
     thread::spawn(move || {
         let mut stdin = std::io::stdin();
@@ -167,8 +209,17 @@ fn main() {
             break;
         } // 0 = Shell beendet
         log.lock().unwrap().write_all(&buf[..n]).unwrap();
+
         print!("{}", String::from_utf8_lossy(&buf[..n]));
         std::io::stdout().flush().ok(); // braucht use std::io::Write
     }
-    writeln!(output_file, "```").unwrap();
+    writeln!(&output_file, "\n```").unwrap();
+
+    writeln!(&output_file, "------------------------------------------").unwrap();
+    writeln!(
+        &output_file,
+        "\nSession End: {}",
+        Local::now().format("%d.%m.%Y %H:%M:%S")
+    )
+    .unwrap();
 }
