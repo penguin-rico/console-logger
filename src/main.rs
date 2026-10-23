@@ -17,6 +17,46 @@ struct Config {
     save_folder: PathBuf,
 }
 
+fn clean(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    // CSI: bis zum Endbyte (@ bis ~) überspringen
+                    while let Some(x) = chars.next() {
+                        if ('@'..='~').contains(&x) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    // OSC (z. B. Fenstertitel): bis BEL oder ESC \
+                    while let Some(x) = chars.next() {
+                        if x == '\x07' {
+                            break;
+                        }
+                        if x == '\x1b' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            '\x08' => {
+                out.pop();
+            } // Backspace: letztes Zeichen löschen
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn create_config(config_folder_path: &PathBuf) -> Config {
     let shell = Select::new("Shell?", vec!["bash", "zsh", "fish"])
         .prompt()
@@ -202,17 +242,21 @@ fn main() {
         }
     });
     crossterm::terminal::enable_raw_mode().unwrap();
-    let log = Arc::new(Mutex::new(&output_file));
+    let mut raw: Vec<u8> = Vec::new();
+
     loop {
         let n = reader.read(&mut buf).unwrap_or(0);
         if n == 0 {
             break;
-        } // 0 = Shell beendet
-        log.lock().unwrap().write_all(&buf[..n]).unwrap();
+        }
+        raw.extend_from_slice(&buf[..n]); // nur sammeln
 
-        print!("{}", String::from_utf8_lossy(&buf[..n]));
-        std::io::stdout().flush().ok(); // braucht use std::io::Write
+        print!("{}", String::from_utf8_lossy(&buf[..n])); // Bildschirm bleibt roh
+        std::io::stdout().flush().ok();
     }
+
+    crossterm::terminal::disable_raw_mode().unwrap(); // fehlt bei dir noch
+    output_file.write_all(clean(&raw).as_bytes()).unwrap();
     writeln!(&output_file, "\n```").unwrap();
 
     writeln!(&output_file, "------------------------------------------").unwrap();
